@@ -21,10 +21,10 @@ coffee_dashboard/
     ├── 1_Executive_Overview.py     ← KPIs, revenue trend, store & product analysis
     ├── 2_Sales_Forecast.py         ← Moving average demand forecasting
     ├── 3_Peak_Demand_Prediction.py ← XGBoost, Random Forest, Linear Regression
-    ├── 4_Model_Comparison.py       ← Head-to-head model evaluation
-    ├── 5_Demand_Pattern_Analysis.py← Hourly, weekly, monthly & heatmap
-    ├── 6_Workforce_Planning.py     ← Staff scheduling by store & hour
-    └── 7_Scenario_Analysis.py      ← What-if revenue & profit modelling
+    ├── 4_Demand_Pattern_Analysis.py← Hourly, weekly, monthly & heatmap
+    ├── 4_Workforce_Planning.py     ← Staff scheduling by store & hour
+    └── 6_Scenario_Analysis.py      ← What-if revenue & profit modelling
+    └── 7_Model_Comparison.py       ← Head-to-head model evaluation
 ```
 
 ## Dataset Format
