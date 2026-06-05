@@ -253,6 +253,7 @@ def workforce_planning(df):
 # ML DATA PREPARATION
 # =====================================================
 
+@st.cache_data(show_spinner=False)
 def prepare_ml_data(df):
     df = df.copy()
     df["date"] = pd.to_datetime(df["date"])
@@ -298,12 +299,13 @@ def evaluate_model(model, X_train, X_test, y_train, y_test):
 # XGBOOST
 # =====================================================
 
-@st.cache_data
+@st.cache_data(show_spinner=False)
 def train_xgboost(df):
     X_train, X_test, y_train, y_test = prepare_ml_data(df)
     model = XGBRegressor(
-        n_estimators=200, learning_rate=0.05, max_depth=6,
-        subsample=0.8, colsample_bytree=0.8, random_state=42
+        n_estimators=100, learning_rate=0.05, max_depth=5,
+        subsample=0.8, colsample_bytree=0.8, random_state=42,
+        tree_method="hist",
     )
     return evaluate_model(model, X_train, X_test, y_train, y_test)
 
@@ -312,11 +314,11 @@ def train_xgboost(df):
 # RANDOM FOREST
 # =====================================================
 
-@st.cache_data
+@st.cache_data(show_spinner=False)
 def train_random_forest(df):
     X_train, X_test, y_train, y_test = prepare_ml_data(df)
     model = RandomForestRegressor(
-        n_estimators=300, max_depth=10, min_samples_split=5,
+        n_estimators=150, max_depth=8, min_samples_split=5,
         random_state=42, n_jobs=-1
     )
     return evaluate_model(model, X_train, X_test, y_train, y_test)
@@ -326,7 +328,7 @@ def train_random_forest(df):
 # LINEAR REGRESSION
 # =====================================================
 
-@st.cache_data
+@st.cache_data(show_spinner=False)
 def train_linear_regression(df):
     X_train, X_test, y_train, y_test = prepare_ml_data(df)
     model = LinearRegression()
@@ -337,7 +339,6 @@ def train_linear_regression(df):
 # MODEL COMPARISON
 # =====================================================
 
-@st.cache_data
 def compare_models(df):
     xgb = train_xgboost(df)
     rf = train_random_forest(df)
