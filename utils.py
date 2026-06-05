@@ -298,6 +298,7 @@ def evaluate_model(model, X_train, X_test, y_train, y_test):
 # XGBOOST
 # =====================================================
 
+@st.cache_data
 def train_xgboost(df):
     X_train, X_test, y_train, y_test = prepare_ml_data(df)
     model = XGBRegressor(
@@ -311,6 +312,7 @@ def train_xgboost(df):
 # RANDOM FOREST
 # =====================================================
 
+@st.cache_data
 def train_random_forest(df):
     X_train, X_test, y_train, y_test = prepare_ml_data(df)
     model = RandomForestRegressor(
@@ -324,6 +326,7 @@ def train_random_forest(df):
 # LINEAR REGRESSION
 # =====================================================
 
+@st.cache_data
 def train_linear_regression(df):
     X_train, X_test, y_train, y_test = prepare_ml_data(df)
     model = LinearRegression()
@@ -334,6 +337,7 @@ def train_linear_regression(df):
 # MODEL COMPARISON
 # =====================================================
 
+@st.cache_data
 def compare_models(df):
     xgb = train_xgboost(df)
     rf = train_random_forest(df)
