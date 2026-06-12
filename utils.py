@@ -469,7 +469,7 @@ def train_xgboost(df: pd.DataFrame, tune: bool = False) -> dict:
             "learning_rate": [0.05, 0.1],
         }
         base = XGBRegressor(random_state=42, tree_method="hist", subsample=0.8, colsample_bytree=0.8)
-        search = GridSearchCV(base, param_grid, cv=3, scoring="r2", n_jobs=-1)
+        search = GridSearchCV(base, param_grid, cv=3, scoring="r2", n_jobs=1)
         search.fit(X_train, y_train)
         model       = search.best_estimator_
         best_params = search.best_params_
@@ -499,12 +499,12 @@ def train_random_forest(df: pd.DataFrame, tune: bool = False) -> dict:
 
     if tune:
         param_grid = {
-            "n_estimators":    [100, 200],
-            "max_depth":       [6, 8, None],
-            "min_samples_split": [2, 5, 10],
+            "n_estimators": [50, 100],
+            "max_depth": [3, 5],
+            "learning_rate": [0.05, 0.1],
         }
         base   = RandomForestRegressor(random_state=42, n_jobs=-1)
-        search = GridSearchCV(base, param_grid, cv=3, scoring="r2", n_jobs=-1)
+        search = GridSearchCV(base, param_grid, cv=3, scoring="r2", n_jobs=1)
         search.fit(X_train, y_train)
         model       = search.best_estimator_
         best_params = search.best_params_
