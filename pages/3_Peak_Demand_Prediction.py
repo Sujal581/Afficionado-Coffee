@@ -14,7 +14,6 @@ import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
 import pandas as pd
-import numpy as np
 from style import (
     inject_css, sidebar_brand, page_header, section_header,
     kpi_card, chart_label, chart_note, insight_card,
@@ -27,14 +26,14 @@ inject_css()
 sidebar_brand("Afficionado Coffee", "Peak Demand")
 page_header("Peak Demand Prediction", subtitle="ML demand forecasting with optional hyperparameter tuning")
 
-if not st.session_state.get("df") is not None:
+if not (st.session_state.get("df") is not None):
     no_data_warning()
     footer()
     st.stop()
 
 df = st.session_state["df"]
 
-# ── Model Configuration ────────────────────────────────────────────────────────
+# ── Hyperparameter Tuning Toggle ───────────────────────────────────────────────
 section_header("Model Configuration")
 col_cfg1, col_cfg2 = st.columns([2, 1])
 with col_cfg1:
@@ -43,14 +42,13 @@ with col_cfg1:
             Enable <strong style="color:#C8963E;">hyperparameter tuning</strong> to run GridSearchCV (3-fold CV)
             across parameter grids for XGBoost and Random Forest.
             This finds optimal settings automatically but takes longer to train.
-            Results are <strong>cached</strong> — tuning only runs once per dataset.
         </div>
     """, unsafe_allow_html=True)
 with col_cfg2:
     tune = st.toggle("Enable Hyperparameter Tuning", value=False)
 
 if tune:
-    insight_card("Hyperparameter tuning active — GridSearchCV (3-fold) will run. Results are cached after the first run.", kind="warning")
+    insight_card("Hyperparameter tuning active — GridSearchCV (3-fold) will run. This may take 30–60 seconds.", kind="warning")
 
 section_header("Dashboard Overview")
 col1, col2, col3, col4 = st.columns(4)
@@ -62,16 +60,10 @@ kpi_card(col4, "Hyperparameter Tuning",  "On" if tune else "Off",  icon="🔧", 
 st.markdown("---")
 
 
-def render_model_tab(result: dict, model_name: str) -> pd.DataFrame:
-    """Render metrics, charts and insights for a single trained model."""
-    # actual/predictions are now plain lists (not Series/ndarray) — convert for DataFrame use
-    actual_arr = np.array(result["actual"])
-    pred_arr   = np.array(result["predictions"])
+def render_model_tab(result, model_name):
     plot_df = pd.DataFrame({
         "Actual":    result["actual"].values,
         "Predicted": result["predictions"].round(1),
-        "Actual":    actual_arr,
-        "Predicted": pred_arr.round(1),
     })
     plot_df["Error"] = plot_df["Actual"] - plot_df["Predicted"]
 
@@ -88,20 +80,16 @@ def render_model_tab(result: dict, model_name: str) -> pd.DataFrame:
         kpi_card(c6, "CV Std Dev",        f"±{result['cv_std']:.2f}%", icon="📊", color="gold")
 
     if result.get("best_params"):
-        params_html = " &nbsp;|&nbsp; ".join(
-            [f"<code style='color:#d4b896'>{k}</code> = <strong>{v}</strong>"
-             for k, v in result["best_params"].items()]
-        )
-        st.markdown(f"""
+        st.markdown("""
             <div style="font-family:'Lato',sans-serif;font-size:0.78rem;color:#C8963E;
                         background:rgba(200,150,62,0.07);border:1px solid rgba(200,150,62,0.2);
                         border-radius:8px;padding:0.7rem 1rem;margin:0.75rem 0;">
                 <strong>Best hyperparameters found by GridSearchCV:</strong><br>
-                {params_html}
+        """ + " &nbsp;|&nbsp; ".join([f"<code style='color:#d4b896'>{k}</code> = <strong>{v}</strong>"
+                                      for k, v in result["best_params"].items()]) + """
             </div>
         """, unsafe_allow_html=True)
 
-    # Actual vs Predicted (first 20 samples)
     section_header("Actual vs Predicted Demand")
     chart_label(f"{model_name} — Prediction Comparison", "Ground truth vs model output (first 20 samples)")
     compare_df = plot_df.head(20).reset_index()
@@ -121,19 +109,20 @@ def render_model_tab(result: dict, model_name: str) -> pd.DataFrame:
     st.plotly_chart(fig, use_container_width=True)
     chart_note(f"{model_name}: accuracy {result['accuracy']:.2f}%, MAE {result['mae']:.2f}. Peak ≈ {result['peak_demand']:.0f} units.")
 
-    # Prediction Timeline (first 50 samples)
     section_header("Prediction Timeline")
     chart_label("Actual vs Predicted Over Time", "First 50 samples with trend overlay")
     tdf = plot_df.head(50)
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=tdf.index, y=tdf["Actual"], mode="lines+markers", name="Actual",
-        line=dict(color=COLORS["caramel"], width=2.5), marker=dict(size=5),
+        line=dict(color=COLORS["caramel"], width=2.5),
+        marker=dict(size=5),
         hovertemplate="Sample %{x}<br>Actual: %{y:,.1f}<extra></extra>",
     ))
     fig.add_trace(go.Scatter(
         x=tdf.index, y=tdf["Predicted"], mode="lines+markers", name="Predicted",
-        line=dict(color=COLORS["cream"], width=2, dash="dash"), marker=dict(size=5),
+        line=dict(color=COLORS["cream"], width=2, dash="dash"),
+        marker=dict(size=5),
         hovertemplate="Sample %{x}<br>Predicted: %{y:,.1f}<extra></extra>",
     ))
     fig.update_yaxes(title="Demand (Units)")
@@ -143,16 +132,22 @@ def render_model_tab(result: dict, model_name: str) -> pd.DataFrame:
     col_err, col_res = st.columns(2)
     with col_err:
         section_header("Error Distribution")
-        fig = px.histogram(plot_df, x="Error", nbins=30, color_discrete_sequence=[COLORS["caramel"]])
+        fig = px.histogram(
+            plot_df, x="Error", nbins=30,
+            color_discrete_sequence=[COLORS["caramel"]],
+        )
         fig.update_xaxes(title="Prediction Error (Actual − Predicted)")
         apply_plot_layout(fig)
         st.plotly_chart(fig, use_container_width=True)
-        chart_note("A distribution centred near zero = low bias.")
+        chart_note("A distribution centred near zero = low bias. The model is not systematically over/under-predicting.")
 
     with col_res:
         section_header("Residual Analysis")
-        fig = px.scatter(plot_df, x="Predicted", y="Error",
-                         color_discrete_sequence=[COLORS["brown"]], opacity=0.7)
+        fig = px.scatter(
+            plot_df, x="Predicted", y="Error",
+            color_discrete_sequence=[COLORS["brown"]],
+            opacity=0.7,
+        )
         fig.add_hline(y=0, line_color=COLORS["caramel"], line_dash="dash")
         fig.update_xaxes(title="Predicted Value")
         fig.update_yaxes(title="Residual")
@@ -166,7 +161,7 @@ def render_model_tab(result: dict, model_name: str) -> pd.DataFrame:
 tab1, tab2, tab3 = st.tabs(["🚀 XGBoost", "🌲 Random Forest", "📈 Linear Regression"])
 
 with tab1:
-    with st.spinner("☕ Training XGBoost" + (" with hyperparameter tuning…" if tune else "… (cached after first run)")):
+    with st.spinner("☕ Training XGBoost" + (" with hyperparameter tuning…" if tune else "…")):
         result_xgb = train_xgboost(df, tune=tune)
     plot_df = render_model_tab(result_xgb, "XGBoost")
 
@@ -184,6 +179,7 @@ with tab1:
         )
         apply_plot_layout(fig)
         st.plotly_chart(fig, use_container_width=True)
+
     with col4:
         section_header("Feature Importance")
         fig = go.Figure(go.Bar(
@@ -202,11 +198,11 @@ with tab1:
     insight_card(f"XGBoost accuracy {result_xgb['accuracy']:.2f}%, MAE {result_xgb['mae']:.2f}.", kind="success")
     insight_card(f"Peak demand ≈ {result_xgb['peak_demand']:.0f} units — allocate {result_xgb['staff']:.0f} staff during peak.", kind="info")
     if result_xgb.get("cv_mean"):
-        insight_card(f"Cross-validation score: {result_xgb['cv_mean']:.2f}% ± {result_xgb['cv_std']:.2f}% — confirms generalisation.", kind="success")
+        insight_card(f"Cross-validation score: {result_xgb['cv_mean']:.2f}% ± {result_xgb['cv_std']:.2f}% — confirms generalisation beyond the test split.", kind="success")
     insight_card(f"{feature_importance.iloc[0]['Feature'].title()} is the most influential forecasting feature.", kind="warning")
 
 with tab2:
-    with st.spinner("☕ Training Random Forest" + (" with hyperparameter tuning…" if tune else "… (cached after first run)")):
+    with st.spinner("☕ Training Random Forest" + (" with hyperparameter tuning…" if tune else "…")):
         result_rf = train_random_forest(df, tune=tune)
     plot_df = render_model_tab(result_rf, "Random Forest")
 
@@ -224,6 +220,7 @@ with tab2:
         )
         apply_plot_layout(fig)
         st.plotly_chart(fig, use_container_width=True)
+
     with col4:
         section_header("Feature Importance")
         fig = go.Figure(go.Bar(
@@ -246,7 +243,7 @@ with tab2:
     insight_card(f"{importance_df.iloc[0]['Feature'].title()} drives demand predictions most strongly.", kind="warning")
 
 with tab3:
-    with st.spinner("☕ Training Linear Regression… (cached after first run)"):
+    with st.spinner("☕ Training Linear Regression…"):
         result_lr = train_linear_regression(df)
     plot_df = render_model_tab(result_lr, "Linear Regression")
 
@@ -266,11 +263,13 @@ with tab3:
                      color_discrete_map={"Actual": COLORS["caramel"], "Predicted": COLORS["cream"]})
         apply_plot_layout(fig)
         st.plotly_chart(fig, use_container_width=True)
+
     with col4:
         section_header("Feature Coefficients")
         fig = go.Figure(go.Bar(
             x=coef_df["Coefficient"], y=coef_df["Feature"],
-            orientation="h", marker_color="#6BA3D4",
+            orientation="h",
+            marker_color="#6BA3D4",
         ))
         apply_plot_layout(fig)
         st.plotly_chart(fig, use_container_width=True)
