@@ -63,9 +63,14 @@ st.markdown("---")
 
 def render_model_tab(result: dict, model_name: str) -> pd.DataFrame:
     """Render metrics, charts and insights for a single trained model."""
+    # actual/predictions are now plain lists (not Series/ndarray) — convert for DataFrame use
+    actual_arr = np.array(result["actual"])
+    pred_arr   = np.array(result["predictions"])
     plot_df = pd.DataFrame({
         "Actual":    result["actual"].values,
         "Predicted": result["predictions"].round(1),
+        "Actual":    actual_arr,
+        "Predicted": pred_arr.round(1),
     })
     plot_df["Error"] = plot_df["Actual"] - plot_df["Predicted"]
 
