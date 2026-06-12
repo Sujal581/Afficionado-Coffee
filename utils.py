@@ -455,32 +455,45 @@ def evaluate_model(
 @st.cache_data(show_spinner=False)
 def train_xgboost(df: pd.DataFrame, tune: bool = False) -> dict:
     """Train XGBoost; cached so the model is not retrained on every widget interaction."""
+    """Train XGBoost; cached so the model is not retrained on every widget interaction.
+    Tuning fixes:
+    - n_jobs=1 in GridSearchCV to prevent multiprocessing deadlocks inside Streamlit.
+    - Smaller param grid (8 combos vs 27) — still finds a good solution, much faster.
+    - nthread=1 on XGBRegressor so it doesn't spawn its own thread pool during CV.
+    """
     X_train, X_test, y_train, y_test = prepare_ml_data(df)
     X_full = pd.concat([X_train, X_test])
     y_full = pd.concat([y_train, y_test])
-
     if tune:
         param_grid = {
             "n_estimators":  [50, 100, 200],
             "max_depth":     [3, 5, 7],
             "learning_rate": [0.01, 0.05, 0.1],
+            "n_estimators":  [50, 100],
+            "max_depth":     [3, 5],
+            "learning_rate": [0.05, 0.1],
         }
         base = XGBRegressor(random_state=42, tree_method="hist", subsample=0.8, colsample_bytree=0.8)
         search = GridSearchCV(base, param_grid, cv=3, scoring="r2", n_jobs=-1)
+        base = XGBRegressor(
+            random_state=42, tree_method="hist",
+            subsample=0.8, colsample_bytree=0.8,
+            nthread=1,
+        )
+        search = GridSearchCV(
+            base, param_grid, cv=3, scoring="r2",
+            n_jobs=1,
+            refit=True,
+        )
         search.fit(X_train, y_train)
         model       = search.best_estimator_
         best_params = search.best_params_
-    else:
-        model = XGBRegressor(
             n_estimators=100, learning_rate=0.05, max_depth=5,
             subsample=0.8, colsample_bytree=0.8,
             random_state=42, tree_method="hist",
+            nthread=1,
         )
         best_params = None
-
-    result = evaluate_model(model, X_train, X_test, y_train, y_test, cv=True, X_full=X_full, y_full=y_full)
-    result["best_params"] = best_params
-    return result
 
 
 # =====================================================
