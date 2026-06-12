@@ -174,7 +174,7 @@ if not inv_df.empty:
     for col in ["Avg Daily Demand", "Demand Std Dev", "Safety Stock", "Reorder Point", "EOQ"]:
         inv_show[col] = inv_show[col].apply(lambda x: round(x, 1))
     st.dataframe(
-        inv_show.style.applymap(
+        inv_show.style.map(
             lambda v: "background-color: rgba(224,112,112,0.15);" if v == "High"
             else ("background-color: rgba(200,150,62,0.10);" if v == "Medium" else ""),
             subset=["Risk"],
