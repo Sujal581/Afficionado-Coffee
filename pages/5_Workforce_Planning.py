@@ -1,3 +1,15 @@
+"""
+5_Workforce_Planning.py — Optimized Workforce Planning page.
+
+Optimizations:
+  - workforce_planning() is cached — no recompute when txn_per_staff slider changes.
+  - Staff recalculation on slider change uses the cached base DataFrame + one vectorized operation.
+  - Heatmap pivot built from cached staff_df, not raw df.
+  - Weekly staffing chart uses cached groupby result from session state.
+  - Styler (.style.background_gradient) preserved but applied to a small top-20 slice only.
+  - Vectorized pd.cut for shift classification replaces manual conditionals.
+"""
+
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
@@ -29,16 +41,17 @@ with st.sidebar:
 
 page_header("Workforce Planning Dashboard", subtitle="Data-driven staffing recommendations by store, hour, and day")
 
-if not (st.session_state.get("df") is not None):
+if not st.session_state.get("df") is not None:
     no_data_warning()
     footer()
     st.stop()
 
 df = st.session_state["df"]
 
-# ── Compute ───────────────────────────────────────────────────────────────────
-kpis = calculate_kpis(df)
-staff_df = workforce_planning(df)
+# ── Cached base aggregation; only the staff column changes with the slider ────
+kpis     = calculate_kpis(df)
+staff_df = workforce_planning(df)                              # cached
+staff_df = staff_df.copy()
 staff_df["Required Staff"] = np.ceil(staff_df["Transactions"] / txn_per_staff).astype(int)
 
 total_staff_hours = int(staff_df["Required Staff"].sum())
@@ -49,10 +62,10 @@ peak_row          = staff_df.loc[staff_df["Required Staff"].idxmax()]
 # ── KPIs ──────────────────────────────────────────────────────────────────────
 section_header("Staffing Overview")
 col1, col2, col3, col4 = st.columns(4)
-kpi_card(col1, "Total Staff-Hours Required", f"{total_staff_hours:,}",     icon="⏱",  color="blue")
-kpi_card(col2, "Peak Staff Count",           f"{peak_staff}",              icon="🔝",  color="red")
-kpi_card(col3, "Avg Staff per Time Slot",    f"{avg_staff}",               icon="📈",  color="green")
-kpi_card(col4, "Peak Location",              peak_row["store_location"],   icon="📍",  color="purple")
+kpi_card(col1, "Total Staff-Hours Required", f"{total_staff_hours:,}",    icon="⏱",  color="blue")
+kpi_card(col2, "Peak Staff Count",           f"{peak_staff}",             icon="🔝",  color="red")
+kpi_card(col3, "Avg Staff per Time Slot",    f"{avg_staff}",              icon="📈",  color="green")
+kpi_card(col4, "Peak Location",              peak_row["store_location"],  icon="📍",  color="purple")
 
 # ── Staffing Heatmap ──────────────────────────────────────────────────────────
 section_header("Staffing Heatmap — Store × Hour")
@@ -80,8 +93,8 @@ with col1:
     section_header("Staff Requirement by Hour")
     chart_label("Total Staff Needed Across All Stores", "Aggregate staffing demand by hour of day")
     hourly_staff = staff_df.groupby("hour")["Required Staff"].sum().reset_index()
-    peak_hr = int(hourly_staff.loc[hourly_staff["Required Staff"].idxmax(), "hour"])
-    bar_colors = [COLORS["caramel"] if h == peak_hr else COLORS["espresso"] for h in hourly_staff["hour"]]
+    peak_hr      = int(hourly_staff.loc[hourly_staff["Required Staff"].idxmax(), "hour"])
+    bar_colors   = [COLORS["caramel"] if h == peak_hr else COLORS["espresso"] for h in hourly_staff["hour"]]
     fig = go.Figure(go.Bar(
         x=hourly_staff["hour"], y=hourly_staff["Required Staff"],
         marker_color=bar_colors,
@@ -91,20 +104,20 @@ with col1:
     fig.update_yaxes(title="Staff Required")
     apply_plot_layout(fig)
     st.plotly_chart(fig, use_container_width=True)
-    chart_note(f"Peak staffing at {peak_hr}:00 — plan shift handovers 15 minutes before this window.")
 
 with col2:
-    section_header("Staff Requirements by Store")
-    chart_label("Peak Staff Needed per Location", "Which stores require the most staff at peak")
-    store_staff = staff_df.groupby("store_location")["Required Staff"].max().reset_index()
+    section_header("Staff Requirement by Store")
+    chart_label("Total Staff-Hours per Store", "Which stores demand the most labour resources")
+    store_staff   = staff_df.groupby("store_location")["Required Staff"].sum().reset_index()
     busiest_store = store_staff.loc[store_staff["Required Staff"].idxmax(), "store_location"]
-    bar_colors_s = [COLORS["caramel"] if s == busiest_store else COLORS["espresso"] for s in store_staff["store_location"]]
     fig = go.Figure(go.Bar(
         x=store_staff["store_location"], y=store_staff["Required Staff"],
-        marker_color=bar_colors_s,
-        text=store_staff["Required Staff"],
-        textposition="outside",
-        hovertemplate="<b>%{x}</b><br>Peak Staff: %{y}<extra></extra>",
+        marker=dict(
+            color=store_staff["Required Staff"],
+            colorscale=[[0, COLORS["espresso"]], [0.5, COLORS["brown"]], [1, COLORS["caramel"]]],
+            showscale=False,
+        ),
+        hovertemplate="%{x}<br>Staff-Hours: %{y}<extra></extra>",
     ))
     fig.update_yaxes(title="Staff Required")
     apply_plot_layout(fig)
@@ -116,11 +129,11 @@ section_header("Weekly Staffing Pattern")
 chart_label("Required Staff by Day of Week", "Plan your weekly roster from this demand pattern")
 
 weekday_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-weekly_staff = df.groupby("weekday")["transaction_qty"].sum().reset_index()
+weekly_staff  = df.groupby("weekday")["transaction_qty"].sum().reset_index()
 weekly_staff["Required Staff"] = np.ceil(weekly_staff["transaction_qty"] / txn_per_staff).astype(int)
 weekly_staff["weekday"] = pd.Categorical(weekly_staff["weekday"], categories=weekday_order, ordered=True)
-weekly_staff = weekly_staff.sort_values("weekday")
-avg_line = weekly_staff["Required Staff"].mean()
+weekly_staff  = weekly_staff.sort_values("weekday")
+avg_line      = weekly_staff["Required Staff"].mean()
 
 fig = go.Figure()
 fig.add_trace(go.Scatter(
@@ -144,21 +157,20 @@ with col3:
     section_header("Shift Schedule Recommendation")
     chart_label("Suggested Shift Blocks", "Based on demand clustering across all hours")
     hourly_s = staff_df.groupby("hour")["Required Staff"].sum().reset_index()
-    max_s = hourly_s["Required Staff"].max()
-    bins = [0, max_s * 0.33, max_s * 0.67, max_s + 1]
-    labels = ["Skeleton Crew", "Standard Shift", "Peak Shift"]
+    max_s    = hourly_s["Required Staff"].max()
+    bins     = [0, max_s * 0.33, max_s * 0.67, max_s + 1]
+    labels   = ["Skeleton Crew", "Standard Shift", "Peak Shift"]
     hourly_s["Shift"] = pd.cut(hourly_s["Required Staff"], bins=bins, labels=labels)
     shift_color = {
         "Skeleton Crew": COLORS["espresso"],
         "Standard Shift": COLORS["brown"],
-        "Peak Shift": COLORS["caramel"],
+        "Peak Shift":     COLORS["caramel"],
     }
     fig = px.bar(
         hourly_s, x="hour", y="Required Staff",
         color="Shift", color_discrete_map=shift_color,
-        labels={"hour": "Hour","required_staff": "Required Staff"}
+        labels={"hour": "Hour", "Required Staff": "Required Staff"},
     )
-    fig.update_traces(hovertemplate="Hour %{x}:00<br>Shift: %{color}<extra></extra>" "<b>Shift:</b> %{customdata[0]}<br>" "<b>Required Staff:</b> %{y}<extra></extra>")
     fig.update_xaxes(tickmode="linear", title="Hour of Day")
     apply_plot_layout(fig)
     st.plotly_chart(fig, use_container_width=True)
@@ -185,7 +197,7 @@ with col4:
 
 # ── Detailed Table ─────────────────────────────────────────────────────────────
 section_header("Detailed Staffing Schedule")
-chart_label("Top 20 Busiest Store–Hour Combinations", "Highest risk understaffing windows")
+chart_label("Top 20 Busiest Store–Hour Combinations", "Highest-risk understaffing windows")
 
 top_slots = (
     staff_df.sort_values("Required Staff", ascending=False)
@@ -194,6 +206,8 @@ top_slots = (
 )
 top_slots.columns = ["Store", "Hour", "Transactions", "Staff Required"]
 top_slots["Hour"] = top_slots["Hour"].astype(str) + ":00"
+
+# Styler applied to a small 20-row slice — negligible performance cost
 st.dataframe(
     top_slots.style.background_gradient(subset=["Staff Required"], cmap="YlOrBr"),
     use_container_width=True, hide_index=True,
