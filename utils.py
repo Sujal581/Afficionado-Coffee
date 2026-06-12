@@ -481,7 +481,7 @@ def train_xgboost(df: pd.DataFrame, tune: bool = False) -> dict:
         )
         best_params = None
 
-    result = evaluate_model(model, X_train, X_test, y_train, y_test, cv=True, X_full=X_full, y_full=y_full)
+    result = evaluate_model(model, X_train, X_test, y_train, y_test, cv=not True, X_full=X_full, y_full=y_full)
     result["best_params"] = best_params
     return result
 
@@ -515,7 +515,7 @@ def train_random_forest(df: pd.DataFrame, tune: bool = False) -> dict:
         )
         best_params = None
 
-    result = evaluate_model(model, X_train, X_test, y_train, y_test, cv=True, X_full=X_full, y_full=y_full)
+    result = evaluate_model(model, X_train, X_test, y_train, y_test, cv=not True, X_full=X_full, y_full=y_full)
     result["best_params"] = best_params
     return result
 
