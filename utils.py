@@ -638,11 +638,13 @@ def inventory_metrics(
 
     # Fixed: group on DataFrame so named-agg columns are supported
     daily_dem = (
-        df.groupby(["date", "product_category"])["transaction_qty"]
-        .sum()
-        .reset_index()
-        .groupby("product_category", as_index=False)["transaction_qty"]
-        .agg(avg_daily_demand=("transaction_qty", "mean"), std_daily_demand=("transaction_qty", "std"))
+        df.groupby(["date", "product_category"], as_index=False)
+        .agg(transaction_qty=("transaction_qty", "sum"))
+        .groupby("product_category", as_index=False)
+        .agg(
+          avg_daily_demand=("transaction_qty", "mean"),
+          std_daily_demand=("transaction_qty", "std")
+        )
     )
     daily_dem["std_daily_demand"] = daily_dem["std_daily_demand"].fillna(0)
 
@@ -687,14 +689,13 @@ def supply_chain_efficiency(df: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame()
 
     store_agg = (
-        df.groupby(["store_location", "date"])["transaction_qty"]
-        .sum()
-        .reset_index()
-        .groupby("store_location", as_index=False)["transaction_qty"]
+        df.groupby(["store_location", "date"], as_index=False)
+        .agg(transaction_qty=("transaction_qty", "sum"))
+        .groupby("store_location", as_index=False)
         .agg(
-            avg_daily_units=("transaction_qty", "mean"),
-            demand_variability=("transaction_qty", "std"),
-            total_units=("transaction_qty", "sum"),
+          avg_daily_units=("transaction_qty", "mean"),
+          demand_variability=("transaction_qty", "std"),
+          total_units=("transaction_qty", "sum"),
         )
     )
     store_agg["demand_variability"] = store_agg["demand_variability"].fillna(0)
