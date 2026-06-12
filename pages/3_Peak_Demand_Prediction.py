@@ -14,6 +14,7 @@ import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
 import pandas as pd
+import numpy as np
 from style import (
     inject_css, sidebar_brand, page_header, section_header,
     kpi_card, chart_label, chart_note, insight_card,
