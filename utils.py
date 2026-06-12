@@ -499,9 +499,10 @@ def train_random_forest(df: pd.DataFrame, tune: bool = False) -> dict:
 
     if tune:
         param_grid = {
-            "n_estimators": [50, 100],
-            "max_depth": [3, 5],
-            "learning_rate": [0.05, 0.1],
+          "n_estimators": [50, 100, 200],
+          "max_depth": [3, 5, 10, None],
+          "min_samples_split": [2, 5, 10],
+          "min_samples_leaf": [1, 2, 4],
         }
         base   = RandomForestRegressor(random_state=42, n_jobs=-1)
         search = GridSearchCV(base, param_grid, cv=3, scoring="r2", n_jobs=1)
