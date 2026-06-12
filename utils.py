@@ -490,18 +490,31 @@ def train_xgboost(df: pd.DataFrame, tune: bool = False) -> dict:
 @st.cache_data(show_spinner=False)
 def train_random_forest(df: pd.DataFrame, tune: bool = False) -> dict:
     """Train Random Forest; cached to avoid retraining on every rerun."""
+    """Train Random Forest; cached to avoid retraining on every rerun.
+    Tuning fixes:
+    - n_jobs=1 everywhere to prevent multiprocessing deadlocks inside Streamlit.
+    - Smaller param grid (8 combos vs 18) — still finds a good solution, much faster.
+    """
     X_train, X_test, y_train, y_test = prepare_ml_data(df)
     X_full = pd.concat([X_train, X_test])
     y_full = pd.concat([y_train, y_test])
-
     if tune:
         param_grid = {
             "n_estimators":    [100, 200],
             "max_depth":       [6, 8, None],
             "min_samples_split": [2, 5, 10],
+            "n_estimators":      [50, 100],
+            "max_depth":         [6, None],
+            "min_samples_split": [2, 5],
         }
         base   = RandomForestRegressor(random_state=42, n_jobs=-1)
         search = GridSearchCV(base, param_grid, cv=3, scoring="r2", n_jobs=-1)
+        base   = RandomForestRegressor(random_state=42, n_jobs=1)
+        search = GridSearchCV(
+            base, param_grid, cv=3, scoring="r2",
+            n_jobs=1,
+            refit=True,
+        )
         search.fit(X_train, y_train)
         model       = search.best_estimator_
         best_params = search.best_params_
@@ -509,13 +522,10 @@ def train_random_forest(df: pd.DataFrame, tune: bool = False) -> dict:
         model = RandomForestRegressor(
             n_estimators=150, max_depth=8,
             min_samples_split=5, random_state=42, n_jobs=-1,
+            n_estimators=100, max_depth=8,
+            min_samples_split=5, random_state=42, n_jobs=1,
         )
         best_params = None
-
-    result = evaluate_model(model, X_train, X_test, y_train, y_test, cv=True, X_full=X_full, y_full=y_full)
-    result["best_params"] = best_params
-    return result
-
 
 # =====================================================
 # LINEAR REGRESSION
