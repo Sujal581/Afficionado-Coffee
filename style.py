@@ -537,6 +537,7 @@ def kpi_card(col, title: str, value: str, icon: str = "", delta: str = "", color
         "teal":   "#5BBFB5",
         "cyan":   "#5BB8C8",
         "gold":   "#D4A853",
+        "rust":   "#A0522D",
     }
     c = COLOR_MAP.get(color, color)
     with col:
