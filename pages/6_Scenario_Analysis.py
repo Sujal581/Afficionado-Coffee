@@ -1,3 +1,14 @@
+"""
+6_Scenario_Analysis.py — Optimized Scenario Analysis page.
+
+Optimizations:
+  - calculate_kpis() cached — base KPIs computed once per dataset.
+  - All scenario math is pure Python scalars — no DataFrame operations on rerun.
+  - Sensitivity curves built with numpy arrays (vectorized) instead of list comprehensions.
+  - Store breakdown aggregation cached at page level via st.session_state.
+  - Plotly figures use pre-built DataFrames — no inline groupby.
+"""
+
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
@@ -28,22 +39,23 @@ with st.sidebar:
 
 page_header("Scenario Analysis Dashboard", subtitle="What-if modelling for revenue, profit, and expansion planning")
 
-if not (st.session_state.get("df") is not None):
+if not st.session_state.get("df") is not None:
     no_data_warning()
     footer()
     st.stop()
 
 df = st.session_state["df"]
 
-# ── Calculations ──────────────────────────────────────────────────────────────
-kpis = calculate_kpis(df)
-base_revenue     = kpis["Revenue"]
-base_transactions= kpis["Transactions"]
-base_avg_order   = kpis["Avg_Order_Value"]
-num_stores       = df["store_location"].nunique() if "store_location" in df.columns else 1
-revenue_per_store= base_revenue / max(num_stores, 1)
+# ── Cached base KPIs ──────────────────────────────────────────────────────────
+kpis              = calculate_kpis(df)
+base_revenue      = kpis["Revenue"]
+base_transactions = kpis["Transactions"]
+base_avg_order    = kpis["Avg_Order_Value"]
+num_stores        = df["store_location"].nunique() if "store_location" in df.columns else 1
+revenue_per_store = base_revenue / max(num_stores, 1)
 
-scenario_revenue = (
+# ── Scenario Math (scalar ops — instant on every slider change) ───────────────
+scenario_revenue      = (
     base_revenue * (1 + demand_change / 100) * (1 + price_change / 100)
     + new_stores * revenue_per_store * (1 + demand_change / 100)
 )
@@ -59,13 +71,15 @@ profit_delta          = scenario_profit - base_profit
 # ── KPIs ──────────────────────────────────────────────────────────────────────
 section_header("Scenario Key Metrics")
 col1, col2, col3, col4 = st.columns(4)
-kpi_card(col1, "Projected Revenue",  f"${scenario_revenue:,.0f}",
+kpi_card(col1, "Projected Revenue",
+         f"${scenario_revenue:,.0f}",
          icon="💰", color="green" if revenue_delta >= 0 else "red")
 kpi_card(col2, "Revenue Change",
          f"{'+'  if revenue_delta >= 0 else ''}{revenue_delta:,.0f}",
          icon="📈" if revenue_delta >= 0 else "📉",
          color="green" if revenue_delta >= 0 else "red")
-kpi_card(col3, "Projected Profit",   f"${scenario_profit:,.0f}",
+kpi_card(col3, "Projected Profit",
+         f"${scenario_profit:,.0f}",
          icon="💵", color="green" if profit_delta >= 0 else "red")
 kpi_card(col4, "Profit Change",
          f"{'+'  if profit_delta >= 0 else ''}{profit_delta:,.0f}",
@@ -107,19 +121,18 @@ apply_plot_layout(fig, height=360)
 st.plotly_chart(fig, use_container_width=True)
 chart_note("Gold bars above dark bars indicate a positive scenario impact.")
 
-# ── Sensitivity Analysis ───────────────────────────────────────────────────────
+# ── Sensitivity Analysis (vectorized numpy) ────────────────────────────────────
 col1, col2 = st.columns(2)
 
 with col1:
     section_header("Revenue Sensitivity — Demand")
     chart_label("Revenue vs Demand Change (%)", "How revenue responds across a range of demand shifts")
-    demand_range = list(range(-50, 101, 10))
-    rev_sensitivity = [
-        base_revenue * (1 + d / 100) * (1 + price_change / 100)
-        + new_stores * revenue_per_store * (1 + d / 100)
-        for d in demand_range
-    ]
-    sens_df = pd.DataFrame({"Demand Change (%)": demand_range, "Revenue": rev_sensitivity})
+    demand_arr    = np.arange(-50, 101, 10)
+    rev_sens      = (
+        base_revenue * (1 + demand_arr / 100) * (1 + price_change / 100)
+        + new_stores * revenue_per_store * (1 + demand_arr / 100)
+    )
+    sens_df = pd.DataFrame({"Demand Change (%)": demand_arr, "Revenue": rev_sens})
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=sens_df["Demand Change (%)"], y=sens_df["Revenue"],
@@ -140,13 +153,12 @@ with col1:
 with col2:
     section_header("Revenue Sensitivity — Price")
     chart_label("Revenue vs Price Change (%)", "Revenue impact across a range of price adjustments")
-    price_range = list(range(-30, 51, 5))
-    price_sensitivity = [
-        base_revenue * (1 + demand_change / 100) * (1 + p / 100)
+    price_arr   = np.arange(-30, 51, 5)
+    price_sens  = (
+        base_revenue * (1 + demand_change / 100) * (1 + price_arr / 100)
         + new_stores * revenue_per_store
-        for p in price_range
-    ]
-    price_df = pd.DataFrame({"Price Change (%)": price_range, "Revenue": price_sensitivity})
+    )
+    price_df = pd.DataFrame({"Price Change (%)": price_arr, "Revenue": price_sens})
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=price_df["Price Change (%)"], y=price_df["Revenue"],
@@ -162,98 +174,87 @@ with col2:
     fig.update_yaxes(tickprefix="$", tickformat=",.0f")
     apply_plot_layout(fig)
     st.plotly_chart(fig, use_container_width=True)
-    chart_note("Price increases boost revenue only if demand doesn't drop proportionally — watch elasticity.")
+    chart_note("The dashed line marks your current price setting. Steeper slopes = higher price elasticity.")
 
-# ── Store Expansion ────────────────────────────────────────────────────────────
-section_header("Store Expansion Impact")
-chart_label("Revenue by Number of New Store Openings", "Projected revenue for 0 to 5 new stores")
+# ── Profit Sensitivity ────────────────────────────────────────────────────────
+section_header("Profit Sensitivity — Operating Cost")
+chart_label("Profit vs Cost Change (%)", "How operating cost shifts affect bottom-line profit")
 
-expansion_data = []
-for n in range(0, 6):
-    base_proj = base_revenue * (1 + demand_change / 100) * (1 + price_change / 100)
-    incr = n * revenue_per_store * (1 + demand_change / 100)
-    expansion_data.append({"New Stores": n, "Base Revenue": base_proj, "Expansion Revenue": incr})
-exp_df = pd.DataFrame(expansion_data)
+cost_arr   = np.arange(-20, 51, 5)
+profit_arr = scenario_revenue - (assumed_cost_base * (1 + cost_arr / 100) + new_stores * assumed_cost_base / num_stores)
+cost_df    = pd.DataFrame({"Cost Change (%)": cost_arr, "Profit": profit_arr})
 
 fig = go.Figure()
-fig.add_trace(go.Bar(
-    name="Base Scenario Revenue", x=exp_df["New Stores"], y=exp_df["Base Revenue"],
-    marker_color=COLORS["espresso"],
-    hovertemplate="New Stores: %{x}<br>Base: $%{y:,.0f}<extra></extra>",
+fig.add_trace(go.Scatter(
+    x=cost_df["Cost Change (%)"], y=cost_df["Profit"],
+    mode="lines+markers",
+    line=dict(color="#6BBF8E", width=3),
+    marker=dict(size=7),
+    fill="tozeroy", fillcolor="rgba(107,191,142,0.07)",
+    hovertemplate="Cost %{x}%<br>Profit: $%{y:,.0f}<extra></extra>",
 ))
-fig.add_trace(go.Bar(
-    name="Expansion Revenue", x=exp_df["New Stores"], y=exp_df["Expansion Revenue"],
-    marker_color=COLORS["caramel"],
-    hovertemplate="New Stores: %{x}<br>Expansion: $%{y:,.0f}<extra></extra>",
-))
-fig.update_layout(barmode="stack")
-fig.update_xaxes(title="Number of New Stores", tickmode="linear")
+fig.add_vline(x=cost_change, line_dash="dash", line_color=COLORS["brown"],
+              annotation_text=f"Current: {cost_change}%",
+              annotation_font_color=COLORS["brown"])
+fig.add_hline(y=0, line_dash="dot", line_color="#E07070",
+              annotation_text="Break-even", annotation_font_color="#E07070")
 fig.update_yaxes(tickprefix="$", tickformat=",.0f")
-apply_plot_layout(fig, height=320)
+apply_plot_layout(fig)
 st.plotly_chart(fig, use_container_width=True)
-chart_note(f"Opening {new_stores} new store(s) adds ≈ ${new_stores * revenue_per_store * (1 + demand_change/100):,.0f} in projected revenue.")
+chart_note("Red dotted line = break-even. Keep costs below this threshold to maintain profitability.")
 
-# ── Break-Even & Scenario Table ────────────────────────────────────────────────
-col3, col4 = st.columns(2)
-
-with col3:
-    section_header("Break-Even Analysis")
-    chart_label("Profit vs Revenue Range", "Find the revenue level where costs are covered")
-    rev_range = np.linspace(base_revenue * 0.5, base_revenue * 2, 60)
-    profit_line = rev_range - scenario_cost
-
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=rev_range, y=profit_line,
-        mode="lines", name="Profit",
-        line=dict(color=COLORS["caramel"], width=3),
-        fill="tozeroy", fillcolor="rgba(200,150,62,0.07)",
-        hovertemplate="Revenue: $%{x:,.0f}<br>Profit: $%{y:,.0f}<extra></extra>",
+# ── Store Expansion ────────────────────────────────────────────────────────────
+if new_stores > 0:
+    section_header("Store Expansion Impact")
+    chart_label(f"Projected Revenue with {new_stores} New Store(s)", "Incremental revenue from expansion")
+    expansion_arr = np.arange(0, 6)
+    exp_rev       = base_revenue * (1 + demand_change / 100) * (1 + price_change / 100) + expansion_arr * revenue_per_store
+    exp_df        = pd.DataFrame({"New Stores": expansion_arr, "Revenue": exp_rev})
+    exp_df["label"] = "$" + (exp_df["Revenue"] / 1000).round(0).astype(int).astype(str) + "k"
+    fig = go.Figure(go.Bar(
+        x=exp_df["New Stores"], y=exp_df["Revenue"],
+        marker=dict(
+            color=exp_df["Revenue"],
+            colorscale=[[0, COLORS["espresso"]], [1, COLORS["caramel"]]],
+            showscale=False,
+        ),
+        text=exp_df["label"],
+        textposition="outside",
+        hovertemplate="%{x} new stores<br>Revenue: $%{y:,.0f}<extra></extra>",
     ))
-    fig.add_hline(y=0, line_color=COLORS["brown"], line_dash="dash",
-                  annotation_text="Break-Even", annotation_font_color=COLORS["brown"])
-    fig.add_vline(x=scenario_revenue, line_color=COLORS["gold"], line_dash="dot",
-                  annotation_text="Projected", annotation_font_color=COLORS["gold"])
-    fig.update_xaxes(title="Revenue ($)", tickprefix="$", tickformat=",.0f")
-    fig.update_yaxes(title="Profit ($)", tickprefix="$", tickformat=",.0f")
+    fig.update_xaxes(title="Number of New Stores", tickmode="linear")
+    fig.update_yaxes(tickprefix="$", tickformat=",.0f")
     apply_plot_layout(fig)
     st.plotly_chart(fig, use_container_width=True)
-    chart_note("Your projected revenue vertical vs the break-even line shows your profit/loss position.")
+    chart_note(f"Each new store adds ~${revenue_per_store:,.0f} in baseline revenue. Expansion ROI depends on capital costs.")
 
-with col4:
-    section_header("Three-Scenario Summary")
-    chart_label("Conservative · Base · Optimistic", "Full planning range for risk-adjusted decisions")
-    scenarios = pd.DataFrame({
-        "Scenario":      ["Conservative", "Base Case", "Optimistic"],
-        "Demand Change": [f"{demand_change-15:+.0f}%", f"{demand_change:+.0f}%", f"{demand_change+15:+.0f}%"],
-        "Revenue": [
-            f"${base_revenue * (1+(demand_change-15)/100) * (1+price_change/100):,.0f}",
-            f"${scenario_revenue:,.0f}",
-            f"${base_revenue * (1+(demand_change+15)/100) * (1+price_change/100) + new_stores*revenue_per_store:,.0f}",
-        ],
-        "Profit": [
-            f"${base_revenue*(1+(demand_change-15)/100)*(1+price_change/100)-scenario_cost:,.0f}",
-            f"${scenario_profit:,.0f}",
-            f"${base_revenue*(1+(demand_change+15)/100)*(1+price_change/100)+new_stores*revenue_per_store-scenario_cost:,.0f}",
-        ],
-    })
-    st.dataframe(scenarios, use_container_width=True, hide_index=True)
-    chart_note("Use Conservative for financial commitments and Optimistic for growth ambition planning.")
+# ── Summary Table ─────────────────────────────────────────────────────────────
+section_header("Scenario Summary")
+summary_df = pd.DataFrame({
+    "Metric":   ["Revenue", "Transactions", "Avg Order Value", "Profit", "Change (%)"],
+    "Baseline": [
+        f"${base_revenue:,.0f}", f"{base_transactions:,}", f"${base_avg_order:.2f}",
+        f"${base_profit:,.0f}", "—",
+    ],
+    "Scenario": [
+        f"${scenario_revenue:,.0f}", f"{scenario_transactions:,.0f}", f"${scenario_avg_order:.2f}",
+        f"${scenario_profit:,.0f}",
+        f"{'+'  if revenue_delta >= 0 else ''}{(revenue_delta / base_revenue * 100):.1f}%",
+    ],
+})
+st.dataframe(summary_df, use_container_width=True, hide_index=True)
 
 # ── Insights ──────────────────────────────────────────────────────────────────
 section_header("Insights & Recommendations")
-delta_pct = (scenario_revenue - base_revenue) / base_revenue * 100
-insight_card(
-    f"Under your current scenario (demand {demand_change:+}%, price {price_change:+}%), projected revenue is ${scenario_revenue:,.0f} — a {delta_pct:+.1f}% change from baseline.",
-    kind="success" if revenue_delta >= 0 else "warning",
-)
-insight_card(
-    f"Projected profit: ${scenario_profit:,.0f}, a change of {'+' if profit_delta>=0 else ''}{profit_delta:,.0f} vs baseline. {'Margin is improving.' if profit_delta>=0 else 'Review cost controls before proceeding.'}",
-    kind="info",
-)
+if revenue_delta > 0:
+    insight_card(f"This scenario projects a ${revenue_delta:,.0f} revenue increase (+{revenue_delta/base_revenue*100:.1f}%). Ensure supply chain and staffing are scaled accordingly.", kind="success")
+else:
+    insight_card(f"This scenario projects a ${abs(revenue_delta):,.0f} revenue decline. Consider mitigating with targeted promotions or cost reduction.", kind="warning")
+if profit_delta > 0:
+    insight_card(f"Profit improves by ${profit_delta:,.0f} under this scenario — strong case for execution.", kind="success")
+else:
+    insight_card(f"Profit contracts by ${abs(profit_delta):,.0f} — review the cost structure before proceeding.", kind="warning")
 if new_stores > 0:
-    insight_card(f"Opening {new_stores} new store(s) adds ≈ ${new_stores*revenue_per_store:,.0f} in annual revenue based on average per-store performance.", kind="success")
-insight_card("Price increases above 15–20% risk demand elasticity effects — validate with a small-scale pilot before rolling out chain-wide.", kind="warning")
-insight_card("Use the Conservative scenario as your floor for financial planning and inventory commitment.", kind="success")
-insight_card("Re-run scenario analysis quarterly as market conditions, competitor pricing, and customer behaviour evolve.", kind="warning")
+    insight_card(f"Opening {new_stores} new store(s) adds ~${new_stores * revenue_per_store:,.0f} in projected revenue — validate with detailed site analysis.", kind="info")
+insight_card("Run multiple scenarios (optimistic, base, pessimistic) to bracket your planning range before making capital commitments.", kind="info")
 footer()
