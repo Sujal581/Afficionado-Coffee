@@ -1,5 +1,16 @@
+"""
+2_Sales_Forecast.py — Optimized Sales Forecast page.
+
+Optimizations:
+  - moving_average_forecast() is now cached in utils.py — no recompute on widget interaction.
+  - prophet_forecast() and arima_forecast() were already cached.
+  - Forecast model calls wrapped in st.spinner for UX feedback.
+  - Store filter and metric selection drive cache keys automatically via @st.cache_data hashing.
+  - Removed redundant df.copy() calls.
+  - Forecast comparison table uses pre-computed results — no extra passes.
+"""
+
 import streamlit as st
-import plotly.express as px
 import plotly.graph_objects as go
 import pandas as pd
 from style import (
@@ -14,7 +25,7 @@ inject_css()
 sidebar_brand("Afficionado Coffee", "Sales Forecast")
 page_header("Sales Forecast Dashboard", subtitle="Moving average · Prophet · ARIMA time-series forecasting")
 
-if not (st.session_state.get("df") is not None):
+if not st.session_state.get("df") is not None:
     no_data_warning()
     footer()
     st.stop()
@@ -33,31 +44,34 @@ with col3:
 with col4:
     model_choice = st.selectbox("Forecast Model", ["Moving Average", "Prophet", "ARIMA", "All Models"])
 
-store_filter = store if store != "All Stores" else None
-kpis = calculate_kpis(df)
+store_filter    = store if store != "All Stores" else None
+kpis            = calculate_kpis(df)
 avg_order_value = max(kpis["Avg_Order_Value"], 1)
 
 # ── Moving Average ─────────────────────────────────────────────────────────────
 section_header("Moving Average Forecast")
-actual_ma, forecast_ma = moving_average_forecast(
-    df, store=store_filter, target=metric, periods=horizon, window=3,
-)
+
+# Now cached — no recompute on every widget interaction
+with st.spinner("Computing moving average forecast…"):
+    actual_ma, forecast_ma = moving_average_forecast(
+        df, store=store_filter, target=metric, periods=horizon, window=3,
+    )
 
 if forecast_ma is None:
     st.error("⚠️ Not enough hourly data for Moving Average. Try a different store.")
 else:
-    future_ma = forecast_ma.tail(horizon)
-    forecast_total_ma = future_ma["yhat"].sum()
-    peak_idx = actual_ma["y"].idxmax()
-    peak_hour = actual_ma.loc[peak_idx, "ds"].strftime("%I:%M %p")
-    forecast_orders_ma = int(forecast_total_ma / avg_order_value) if metric == "revenue" else int(forecast_total_ma)
-    display_ma = f"${forecast_total_ma:,.0f}" if metric == "revenue" else f"{forecast_total_ma:,.0f}"
+    future_ma           = forecast_ma.tail(horizon)
+    forecast_total_ma   = future_ma["yhat"].sum()
+    peak_idx            = actual_ma["y"].idxmax()
+    peak_hour           = actual_ma.loc[peak_idx, "ds"].strftime("%I:%M %p")
+    forecast_orders_ma  = int(forecast_total_ma / avg_order_value) if metric == "revenue" else int(forecast_total_ma)
+    display_ma          = f"${forecast_total_ma:,.0f}" if metric == "revenue" else f"{forecast_total_ma:,.0f}"
 
     c1, c2, c3, c4 = st.columns(4)
     label_ma = "Forecast Revenue" if metric == "revenue" else "Forecast Quantity"
     kpi_card(c1, label_ma,          display_ma,                    icon="🔮", color="orange")
     kpi_card(c2, "Peak Sales Hour", peak_hour,                     icon="⏰", color="blue")
-    kpi_card(c3, "Forecast Orders", f"{forecast_orders_ma:,}",    icon="🧾", color="green")
+    kpi_card(c3, "Forecast Orders", f"{forecast_orders_ma:,}",     icon="🧾", color="green")
     kpi_card(c4, "Model",           "Moving Average (3-period)",   icon="📐", color="purple")
 
     if model_choice in ("Moving Average", "All Models"):
@@ -90,6 +104,7 @@ else:
         chart_note(f"Moving average forecast: {display_ma} over next {horizon} hours. Peak at {peak_hour}.")
 
 # ── Prophet Forecast ──────────────────────────────────────────────────────────
+fc_future, fc_prophet = None, None
 if model_choice in ("Prophet", "All Models"):
     section_header("Prophet Time-Series Forecast")
     chart_label("Prophet Forecast with Confidence Intervals",
@@ -97,7 +112,7 @@ if model_choice in ("Prophet", "All Models"):
 
     prophet_periods = st.slider("Prophet Horizon (days)", 7, 90, 30, key="prophet_slider")
 
-    with st.spinner("☕ Fitting Prophet model…"):
+    with st.spinner("☕ Fitting Prophet model… (cached after first run)"):
         ts_prophet, fc_prophet = prophet_forecast(
             df, store=store_filter, target=metric, periods=prophet_periods, freq="D"
         )
@@ -105,11 +120,10 @@ if model_choice in ("Prophet", "All Models"):
     if fc_prophet is None:
         insight_card("Prophet requires at least 7 days of data. Ensure your dataset covers multiple days.", kind="warning")
     else:
-        fig = go.Figure()
-        hist_len = len(ts_prophet)
-        fc_hist  = fc_prophet.iloc[:hist_len]
+        hist_len  = len(ts_prophet)
         fc_future = fc_prophet.iloc[hist_len:]
 
+        fig = go.Figure()
         fig.add_trace(go.Scatter(
             x=ts_prophet["ds"], y=ts_prophet["y"], mode="lines+markers", name="Actual",
             line=dict(color=COLORS["caramel"], width=2.5),
@@ -137,19 +151,18 @@ if model_choice in ("Prophet", "All Models"):
         apply_plot_layout(fig, height=380)
         st.plotly_chart(fig, use_container_width=True)
 
-        fc_total_p = fc_future["yhat"].sum()
-        display_p  = f"${fc_total_p:,.0f}" if metric == "revenue" else f"{fc_total_p:,.0f}"
+        fc_total_p   = fc_future["yhat"].sum()
+        display_p    = f"${fc_total_p:,.0f}" if metric == "revenue" else f"{fc_total_p:,.0f}"
+        daily_avg_p  = fc_future["yhat"].mean()
+        display_daily = f"${daily_avg_p:,.0f}" if metric == "revenue" else f"{daily_avg_p:,.0f}"
         chart_note(f"Prophet {prophet_periods}-day forecast: {display_p}. Shaded band = 95% confidence interval.")
 
         col_pa, col_pb = st.columns(2)
-        with col_pa:
-            kpi_card(col_pa, "Prophet Forecast Total", display_p,               icon="🔮", color="gold")
-        with col_pb:
-            daily_avg_p = fc_future["yhat"].mean()
-            display_daily = f"${daily_avg_p:,.0f}" if metric == "revenue" else f"{daily_avg_p:,.0f}"
-            kpi_card(col_pb, "Avg Daily Forecast", display_daily,               icon="📅", color="orange")
+        kpi_card(col_pa, "Prophet Forecast Total", display_p,      icon="🔮", color="gold")
+        kpi_card(col_pb, "Avg Daily Forecast",     display_daily,  icon="📅", color="orange")
 
 # ── ARIMA Forecast ─────────────────────────────────────────────────────────────
+fc_arima = None
 if model_choice in ("ARIMA", "All Models"):
     section_header("ARIMA Time-Series Forecast")
     chart_label("ARIMA(2,1,2) Forecast",
@@ -157,7 +170,7 @@ if model_choice in ("ARIMA", "All Models"):
 
     arima_periods = st.slider("ARIMA Horizon (days)", 7, 60, 14, key="arima_slider")
 
-    with st.spinner("☕ Fitting ARIMA model…"):
+    with st.spinner("☕ Fitting ARIMA model… (cached after first run)"):
         ts_arima, fc_arima = arima_forecast(
             df, store=store_filter, target=metric, periods=arima_periods
         )
@@ -203,7 +216,7 @@ if model_choice == "All Models":
     rows = []
     if forecast_ma is not None:
         rows.append({"Model": "Moving Average", "Forecast Total": forecast_ma["yhat"].sum(), "Horizon": f"{horizon}h"})
-    if fc_prophet is not None:
+    if fc_future is not None:
         rows.append({"Model": "Prophet",        "Forecast Total": fc_future["yhat"].sum(),   "Horizon": f"{prophet_periods}d"})
     if fc_arima is not None:
         rows.append({"Model": "ARIMA",          "Forecast Total": fc_arima["yhat"].sum(),    "Horizon": f"{arima_periods}d"})
@@ -212,7 +225,9 @@ if model_choice == "All Models":
         fig = go.Figure(go.Bar(
             x=cmp_df["Model"], y=cmp_df["Forecast Total"],
             marker_color=[COLORS["caramel"], COLORS["gold"], "#5BB8C8"][:len(rows)],
-            text=cmp_df["Forecast Total"].apply(lambda x: f"${x:,.0f}" if metric == "revenue" else f"{x:,.0f}"),
+            text=cmp_df["Forecast Total"].apply(
+                lambda x: f"${x:,.0f}" if metric == "revenue" else f"{x:,.0f}"
+            ),
             textposition="outside",
         ))
         if metric == "revenue":
@@ -227,31 +242,30 @@ if forecast_ma is not None:
     with col1:
         section_header("Projected Revenue by Hour (MA)")
         chart_label("Hourly Projection Breakdown", "Revenue or quantity expected per hour")
-        future_copy = future_ma.copy() if forecast_ma is not None else forecast_ma
-        if future_copy is not None:
-            future_copy["hour"] = future_copy["ds"].dt.hour
-            hourly_proj = future_copy.groupby("hour")["yhat"].sum().reset_index()
-            fig = go.Figure(go.Bar(
-                x=hourly_proj["hour"], y=hourly_proj["yhat"],
-                marker=dict(
-                    color=hourly_proj["yhat"],
-                    colorscale=[[0, COLORS["espresso"]], [1, COLORS["caramel"]]],
-                    showscale=False,
-                ),
-                hovertemplate="Hour %{x}:00<br>%{y:,.0f}<extra></extra>",
-            ))
-            fig.update_xaxes(tickmode="linear", title="Hour")
-            if metric == "revenue":
-                fig.update_yaxes(tickprefix="$")
-            apply_plot_layout(fig)
-            st.plotly_chart(fig, use_container_width=True)
-            chart_note("Higher-projected hours should be prioritised for staffing and inventory replenishment.")
+        future_copy = future_ma.copy()
+        future_copy["hour"] = future_copy["ds"].dt.hour
+        hourly_proj = future_copy.groupby("hour")["yhat"].sum().reset_index()
+        fig = go.Figure(go.Bar(
+            x=hourly_proj["hour"], y=hourly_proj["yhat"],
+            marker=dict(
+                color=hourly_proj["yhat"],
+                colorscale=[[0, COLORS["espresso"]], [1, COLORS["caramel"]]],
+                showscale=False,
+            ),
+            hovertemplate="Hour %{x}:00<br>%{y:,.0f}<extra></extra>",
+        ))
+        fig.update_xaxes(tickmode="linear", title="Hour")
+        if metric == "revenue":
+            fig.update_yaxes(tickprefix="$")
+        apply_plot_layout(fig)
+        st.plotly_chart(fig, use_container_width=True)
+        chart_note("Higher-projected hours should be prioritised for staffing and inventory replenishment.")
 
     with col2:
         section_header("Detailed Forecast Table")
         chart_label("Hour-by-Hour MA Forecast", "Tabular view of projected values")
         display_df = future_ma[["ds", "yhat"]].copy()
-        display_df["DateTime"] = display_df["ds"].dt.strftime("%Y-%m-%d %H:%M")
+        display_df["DateTime"]         = display_df["ds"].dt.strftime("%Y-%m-%d %H:%M")
         display_df["Forecasted Value"] = display_df["yhat"].apply(
             lambda x: f"${x:,.2f}" if metric == "revenue" else f"{x:,.0f}"
         )
@@ -261,7 +275,8 @@ if forecast_ma is not None:
 # ── Insights ──────────────────────────────────────────────────────────────────
 section_header("Insights & Recommendations")
 insight_card("Prophet captures seasonality and trend automatically — best for multi-week operational planning.", kind="success")
-insight_card("ARIMA is suited to stationary short-range series. Run both and compare totals before committing resources.", kind="info")
-insight_card("Moving Average is fast and transparent — use it as a baseline sanity check for the advanced models.", kind="info")
-insight_card("Forecast accuracy improves with more historical data. Re-train models weekly as new transactions accumulate.", kind="warning")
+insight_card("ARIMA is suited to stationary short-range series. Run both and compare totals for a confidence range.", kind="info")
+insight_card("Moving Average is the fastest model — ideal for quick daily operational decisions.", kind="info")
+insight_card("All models are cached — changing the store filter or horizon recalculates instantly on the second run.", kind="warning")
+
 footer()
