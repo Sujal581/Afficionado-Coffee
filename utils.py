@@ -19,7 +19,7 @@ import io
 import numpy as np
 import pandas as pd
 import streamlit as st
-from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import GridSearchCV, cross_val_score, train_test_split
@@ -200,12 +200,15 @@ def peak_demand_prediction(df: pd.DataFrame) -> pd.DataFrame:
         .sum()
         .reset_index()
     )
-    hourly["Demand_Level"] = pd.qcut(
-        hourly["transaction_qty"],
-        q=4,
-        labels=["Low", "Medium", "High", "Extreme"],
-        duplicates="drop",
-    )
+    try:
+        hourly["Demand_Level"] = pd.qcut(
+          hourly["transaction_qty"],
+          q=4,
+          labels=["Low", "Medium", "High", "Extreme"],
+          duplicates="drop"
+        )
+    except Exception:
+        hourly["Demand_Level"] = "Medium"
     return hourly
 
 
@@ -452,7 +455,7 @@ def evaluate_model(
 # XGBOOST
 # =====================================================
 
-@st.cache_data(show_spinner=False)
+@st.cache_resource(show_spinner=False)
 def train_xgboost(df: pd.DataFrame, tune: bool = False) -> dict:
     """Train XGBoost; cached so the model is not retrained on every widget interaction."""
     X_train, X_test, y_train, y_test = prepare_ml_data(df)
@@ -487,7 +490,7 @@ def train_xgboost(df: pd.DataFrame, tune: bool = False) -> dict:
 # RANDOM FOREST
 # =====================================================
 
-@st.cache_data(show_spinner=False)
+@st.cache_resource(show_spinner=False)
 def train_random_forest(df: pd.DataFrame, tune: bool = False) -> dict:
     """Train Random Forest; cached to avoid retraining on every rerun."""
     X_train, X_test, y_train, y_test = prepare_ml_data(df)
@@ -521,7 +524,7 @@ def train_random_forest(df: pd.DataFrame, tune: bool = False) -> dict:
 # LINEAR REGRESSION
 # =====================================================
 
-@st.cache_data(show_spinner=False)
+@st.cache_resource(show_spinner=False)
 def train_linear_regression(df: pd.DataFrame) -> dict:
     """Train Linear Regression; cached."""
     X_train, X_test, y_train, y_test = prepare_ml_data(df)
@@ -537,7 +540,7 @@ def train_linear_regression(df: pd.DataFrame) -> dict:
 # MODEL COMPARISON TABLE  — now cached
 # =====================================================
 
-@st.cache_data(show_spinner=False)
+@st.cache_resource(show_spinner=False)
 def compare_models(df: pd.DataFrame) -> pd.DataFrame:
     """Train all three models and return a comparison DataFrame.
 
